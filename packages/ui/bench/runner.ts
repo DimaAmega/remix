@@ -477,7 +477,29 @@ const operations: Operation[] = [
       await clear(page)
     },
   },
+  {
+    name: 'traceViewerSearch',
+    setup: (page) => click(page, '#switchToTraceViewer'),
+    action: (page) => clickAndMeasure(page, '#traceViewerSearch', 'traceViewerSearch'),
+    teardown: (page) => click(page, '#switchFromTraceViewer'),
+  },
 ]
+
+// Virtual frameworks: same app dir, different URL query
+// (`remix-legacy` runs the scheduler's pre-memoization ancestor lookup)
+const FRAMEWORK_ALIASES: Record<string, { dir: string; query: string }> = {
+  'remix-legacy': { dir: 'remix', query: '?__legacy' },
+}
+
+function getFrameworkAliases(): string[] {
+  return Object.keys(FRAMEWORK_ALIASES)
+}
+
+// Page URL for a framework; an alias loads its target app with the alias query
+function getFrameworkUrl(framework: string): string {
+  let { dir, query } = FRAMEWORK_ALIASES[framework] ?? { dir: framework, query: '' }
+  return `${BASE_URL}/${dir}/index.html${query}`
+}
 
 // Start the benchmark server
 function startServer(): Promise<ChildProcess> {
@@ -530,6 +552,7 @@ function getFrameworks(): string[] {
   return entries
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
+    .concat(getFrameworkAliases())
     .sort()
 }
 
@@ -744,7 +767,7 @@ async function benchmarkFramework(
   let profiles = new Map<string, FunctionProfile[][]>()
   let allocProfiles = new Map<string, AllocationProfile[][]>()
 
-  let url = `${BASE_URL}/${framework}/index.html`
+  let url = getFrameworkUrl(framework)
 
   // Filter operations if benchmark filter is specified
   let filteredOperations =

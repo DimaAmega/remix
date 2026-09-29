@@ -10,6 +10,12 @@ import {
 import type { Benchmark, Row } from '../shared.ts'
 import { createRoot, on } from '@remix-run/ui'
 import type { Handle } from '@remix-run/ui'
+import { TraceViewer, loadTrace } from './trace-viewer.tsx'
+
+// TODO(bench): remove before merge. `?__legacy` switches the scheduler to the old ancestor lookup.
+;(globalThis as any).__REMIX_LEGACY_ANCESTOR_LOOKUP__ = new URLSearchParams(location.search).has(
+  '__legacy',
+)
 
 export const name = 'remix'
 
@@ -741,7 +747,7 @@ function Dashboard(handle: Handle<{ onSwitchToTable: () => void }>) {
 function App(handle: Handle) {
   let rows: Row[] = []
   let selected: number | null = null
-  let view: 'table' | 'dashboard' = 'table'
+  let view: 'table' | 'dashboard' | 'trace-viewer' = 'table'
 
   let setRows = (newRows: Row[]) => {
     rows = newRows
@@ -766,6 +772,10 @@ function App(handle: Handle) {
   return () => {
     if (view === 'dashboard') {
       return <Dashboard onSwitchToTable={switchToTable} />
+    }
+
+    if (view === 'trace-viewer') {
+      return <TraceViewer onExit={switchToTable} />
     }
 
     return (
@@ -840,6 +850,15 @@ function App(handle: Handle) {
                   }}
                 />
                 <Button id="switchToDashboard" text="Switch to Dashboard" fn={switchToDashboard} />
+                <Button
+                  id="switchToTraceViewer"
+                  text="Switch to Trace Viewer"
+                  fn={() => {
+                    loadTrace()
+                    view = 'trace-viewer'
+                    handle.update()
+                  }}
+                />
               </div>
             </div>
           </div>
