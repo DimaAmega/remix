@@ -8,6 +8,7 @@ import {
   setActiveSchedulerUpdateParents,
 } from './reconcile.ts'
 import { defaultStyleManager } from './diff-props.ts'
+import { isRuntimeFlagEnabled } from './runtime-flags.ts'
 import type { StyleManager } from '../style/index.ts'
 
 type EmptyFn = () => void
@@ -160,17 +161,34 @@ export function createScheduler(
 
         if (batch.size > 0) {
           let vnodes = Array.from(batch)
-          let noScheduledAncestor = new Set<VNodeParent>()
+          let noScheduledAncestorInBatch = new Set<VNodeParent>()
+          let scheduledAncestorInBatch = new Set<VNodeParent>()
+          // TODO(bench): remove before merge
+          let legacy = isRuntimeFlagEnabled('__REMIX_LEGACY_ANCESTOR_LOOKUP__')
 
           for (let [vnode, domParent] of vnodes) {
-            if (ancestorIsScheduled(vnode, batch, noScheduledAncestor)) continue
+            if (
+              legacy
+                ? ancestorIsScheduledLegacy(vnode, batch, noScheduledAncestorInBatch)
+                : ancestorIsScheduled(
+                    vnode,
+                    batch,
+                    noScheduledAncestorInBatch,
+                    scheduledAncestorInBatch,
+                  )
+            ) {
+              continue
+            }
+
             if (!trackCascadingUpdate(vnode)) return
+
             let curr = vnode._content
             // Calculate anchor at render time from current vdom position (never stale).
             // Needed for fragment self-updates that add children - without this, new children
             // would be appended after siblings. The keyed diff has placement logic, but unkeyed
             // diff relies on anchor for correct positioning.
             let anchor = findNextSiblingDomAnchor(vnode) || undefined
+
             try {
               renderComponent(curr, vnode, domParent, vnode._context, anchor)
             } catch (error) {
@@ -223,13 +241,48 @@ export function createScheduler(
   function ancestorIsScheduled(
     vnode: CommittedComponentNode,
     batch: Map<CommittedComponentNode, ParentNode>,
-    safe: Set<VNodeParent>,
+    noScheduledAncestorInBatch: Set<VNodeParent>,
+    scheduledAncestorInBatch: Set<VNodeParent>,
   ): boolean {
     let path: VNodeParent[] = []
     let current: VNodeParent | undefined = vnode._parent
 
     while (current) {
       // Already verified this node has no scheduled ancestor above it
+      if (noScheduledAncestorInBatch.has(current)) {
+        for (let node of path) noScheduledAncestorInBatch.add(node)
+        return false
+      }
+
+      // Already verified this node has a scheduled ancestor above it
+      if (
+        scheduledAncestorInBatch.has(current) ||
+        (isCommittedComponentNode(current) && batch.has(current))
+      ) {
+        for (let node of path) scheduledAncestorInBatch.add(node)
+        return true
+      }
+
+      path.push(current)
+      current = current.kind === 'root' ? undefined : current._parent
+    }
+
+    // Reached root - mark entire path as having no scheduled ancestor
+    // for future lookups in this batch
+    for (let node of path) noScheduledAncestorInBatch.add(node)
+    return false
+  }
+
+  // TODO(bench): remove before merge. Pre-memoization version for A/B benchmarks.
+  function ancestorIsScheduledLegacy(
+    vnode: CommittedComponentNode,
+    batch: Map<CommittedComponentNode, ParentNode>,
+    safe: Set<VNodeParent>,
+  ): boolean {
+    let path: VNodeParent[] = []
+    let current: VNodeParent | undefined = vnode._parent
+
+    while (current) {
       if (safe.has(current)) {
         for (let node of path) safe.add(node)
         return false
@@ -244,7 +297,6 @@ export function createScheduler(
       current = current.kind === 'root' ? undefined : current._parent
     }
 
-    // Reached root - mark entire path as safe for future lookups
     for (let node of path) safe.add(node)
     return false
   }
